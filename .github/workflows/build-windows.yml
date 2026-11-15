@@ -24,11 +24,13 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Restore and Test
+        shell: pwsh
         run: |
           dotnet restore windows/EkranKaydedici.sln
           dotnet test windows/EkranKaydedici.sln -c Release --no-restore
 
       - name: Publish single-file EkranKaydedici.exe
+        shell: pwsh
         run: |
           dotnet publish windows/EkranKaydedici/EkranKaydedici.csproj `
             -c Release `
@@ -50,14 +52,14 @@ jobs:
           New-Item -ItemType Directory -Path bundle -Force | Out-Null
           Copy-Item "publish-win-x64\EkranKaydedici.exe" "bundle\EkranKaydedici.exe"
           Copy-Item $ffmpegExe.FullName "bundle\ffmpeg.exe"
-          @"
-Ekran Kaydedici (Windows x64)
-=============================
-1. Klasoru istediginiz yere cikartin ve EkranKaydedici.exe dosyasini calistirin.
-2. Varsayilan olarak Medal modu (Anlik Tekrar) aciktir; F8 tusuna basinca son 30 saniyeyi kaydeder.
-3. Kayitlar "Videolar\EkranKayitlari" klasorune kaydedilir.
-4. Pencereyi X ile kapattiginizda sag alt sistem tepsisinde calismaya devam eder.
-"@ | Out-File -FilePath "bundle\KULLANIM.txt" -Encoding utf8
+          @(
+            'Ekran Kaydedici (Windows x64)'
+            '============================='
+            '1. Klasoru istediginiz yere cikartin ve EkranKaydedici.exe dosyasini calistirin.'
+            '2. Varsayilan olarak Medal modu (Anlik Tekrar) aciktir; F8 tusuna basinca son 30 saniyeyi kaydeder.'
+            '3. Kayitlar "Videolar\EkranKayitlari" klasorune kaydedilir.'
+            '4. Pencereyi X ile kapattiginizda sag alt sistem tepsisinde calismaya devam eder.'
+          ) | Set-Content -Path "bundle\KULLANIM.txt" -Encoding utf8
 
           Compress-Archive -Path "bundle\*" -DestinationPath "EkranKaydedici-Windows-x64.zip" -Force
 
