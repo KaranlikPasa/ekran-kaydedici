@@ -45,3 +45,23 @@ hl.bind("F8", hl.dsp.exec_cmd("$HOME/Projects/ekran-kaydedici/clip.sh"), { locke
 ```
 
 Kayıtlar varsayılan olarak `~/Videos/EkranKayitlari/` klasörüne kaydedilir.
+
+---
+
+## Windows Sürümü (Windows 10/11 x64)
+
+Windows sürümü `windows/` klasöründe **.NET 8 (WinForms)** + **NAudio (WASAPI)** + **FFmpeg** tabanlı olarak yer alır:
+
+- **İndirme:** GitHub [Releases](https://github.com/KaranlikPasa/ekran-kaydedici/releases) sayfasından `EkranKaydedici-Windows-x64.zip` dosyasını indirip çıkartın ve `EkranKaydedici.exe` dosyasını çalıştırın (içinde `ffmpeg.exe` dahildir, ek kurulum gerekmez).
+- **Özellikler:**
+  - Global **F8** kısayolu (`RegisterHotKey`), pencere kapalıyken sağ alt sistem tepsisinde arka planda çalışır.
+  - Ekstra "Stereo Mix" ayarı gerekmeden doğrudan **WASAPI Loopback** ile sistem sesi + mikrofon yakalar.
+  - `ddagrab` (DXGI Desktop Duplication) + donanım kodlayıcıyı (`h264_nvenc` / `h264_qsv` / `h264_amf`, yedek `libx264`) otomatik algılar.
+  - İstenirse **Windows ile arka planda başlat** seçeneği sunar.
+
+### Windows'ta Kaynaktan Derleme
+
+```powershell
+dotnet test windows/EkranKaydedici.sln -c Release
+dotnet publish windows/EkranKaydedici/EkranKaydedici.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+```
