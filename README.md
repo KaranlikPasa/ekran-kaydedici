@@ -1,0 +1,47 @@
+# Ekran Kaydedici
+
+Wayland / Hyprland için GTK4 ve Libadwaita tabanlı, düşük kaynak tüketimli, Medal tarzı basit ekran kaydedici.
+
+## Özellikler
+
+- **Anlık Tekrar (Medal Modu · F8):** Arka planda RAM tamponunda (`$XDG_RUNTIME_DIR/ekran-kaydedici-buffer`) son 15 / 30 / 60 / 90 saniyeyi tutar; kısayol tuşuna basınca kaydı durdurmadan anında `.mp4` klip kaydeder.
+- **Düşük Sistem Tüketimi:** Intel VAAPI (`h264_vaapi` + DMA-BUF) donanım kodlaması kullanır (bulunamazsa `libx264 ultrafast` yedeğine geçer). SSD aşınması yapmaz.
+- **Ses Desteği:** Sistem sesi, mikrofon veya her ikisini aynı anda (geçici PipeWire mikseri ile) kaydedebilir.
+- **Manuel Kayıt:** Tam ekran veya `slurp` ile bölge seçerek doğrudan kayıt alabilir.
+- **Sistem Tepsisi & Arka Plan:** `--background` parametresiyle pencere açmadan başlar, `StatusNotifierItem` üzerinden tepsi simgesi sunar.
+
+## Gereksinimler
+
+- Python 3 + `python-gobject` (`GTK 4`, `Libadwaita`)
+- `wf-recorder`
+- `ffmpeg`
+- `slurp` (bölge seçimi için)
+- `pulseaudio` / `pipewire-pulse` (`pactl`)
+- `libnotify` (`notify-send`) ve `glib2` (`gdbus`)
+
+## Kullanım
+
+```bash
+# Arayüzü aç
+./launch.sh
+
+# Arka planda (penceresiz) başlat
+./launch.sh --background
+
+# Çalışan arka plan örneğinden anlık klip kaydet
+./clip.sh
+```
+
+### Hyprland Örnek Yapılandırma
+
+`exec-once` / başlangıç:
+```lua
+hl.exec_cmd("$HOME/Projects/ekran-kaydedici/launch.sh --background")
+```
+
+`F8` kısayolu:
+```lua
+hl.bind("F8", hl.dsp.exec_cmd("$HOME/Projects/ekran-kaydedici/clip.sh"), { locked = true, description = "Ekran Kaydedici: Son klibi kaydet (F8)" })
+```
+
+Kayıtlar varsayılan olarak `~/Videos/EkranKayitlari/` klasörüne kaydedilir.
