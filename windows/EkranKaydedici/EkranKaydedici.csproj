@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="app.ico" />
+    <EmbeddedResource Include="ffmpeg.exe.gz" Condition="Exists('ffmpeg.exe.gz')" />
   </ItemGroup>
 
   <ItemGroup>

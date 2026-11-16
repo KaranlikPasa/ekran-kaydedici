@@ -9,4 +9,6 @@ windows/**/bin/
 windows/**/obj/
 windows/dist/
 windows/publish-win-x64/
+windows/EkranKaydedici/ffmpeg.exe
+windows/EkranKaydedici/ffmpeg.exe.gz
 .vs/

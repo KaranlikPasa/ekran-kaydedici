@@ -52,7 +52,7 @@ Kayıtlar varsayılan olarak `~/Videos/EkranKayitlari/` klasörüne kaydedilir.
 
 Windows sürümü `windows/` klasöründe **.NET 8 (WinForms)** + **NAudio (WASAPI)** + **FFmpeg** tabanlı olarak yer alır:
 
-- **İndirme:** GitHub [Releases](https://github.com/KaranlikPasa/ekran-kaydedici/releases) sayfasından `EkranKaydedici-Windows-x64.zip` dosyasını indirip çıkartın ve `EkranKaydedici.exe` dosyasını çalıştırın (içinde `ffmpeg.exe` dahildir, ek kurulum gerekmez).
+- **İndirme:** GitHub [Releases](https://github.com/KaranlikPasa/ekran-kaydedici/releases) sayfasından doğrudan `EkranKaydedici.exe` dosyasını indirip çalıştırın (`ffmpeg.exe` içine gömülüdür, ek kurulum gerekmez).
 - **Özellikler:**
   - Global **F8** kısayolu (`RegisterHotKey`), pencere kapalıyken sağ alt sistem tepsisinde arka planda çalışır.
   - Ekstra "Stereo Mix" ayarı gerekmeden doğrudan **WASAPI Loopback** ile sistem sesi + mikrofon yakalar.

@@ -84,4 +84,18 @@ public sealed class CoreTests
         Assert.Contains("gdigrab", regionArgs);
         Assert.Contains("400x300", regionArgs);
     }
+
+    [Fact]
+    public void RealFfmpegSmokeTestWhenAvailable()
+    {
+        var ffmpegPath = Environment.GetEnvironmentVariable("EKRAN_TEST_FFMPEG");
+        if (string.IsNullOrWhiteSpace(ffmpegPath) || !File.Exists(ffmpegPath))
+        {
+            return;
+        }
+
+        var profile = FfmpegProbe.DetectProfile(ffmpegPath);
+        Assert.False(string.IsNullOrWhiteSpace(profile.EncoderName));
+        Assert.False(string.IsNullOrWhiteSpace(profile.CaptureMethod));
+    }
 }

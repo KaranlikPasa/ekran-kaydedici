@@ -4,7 +4,11 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Net.Http;
+using System.Reflection;
+using System.Threading.Tasks;
 
 namespace EkranKaydedici.Services;
 
@@ -15,6 +19,10 @@ public sealed record CaptureProfile(
 
 public static class FfmpegProbe
 {
+    private const string EmbeddedFfmpegResource = "EkranKaydedici.ffmpeg.exe.gz";
+    private const string FfmpegDownloadUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+    private const long MinValidFfmpegBytes = 5 * 1024 * 1024;
+
     private static readonly string[] PreferredEncoders =
     [
         "h264_nvenc",
@@ -23,26 +31,150 @@ public static class FfmpegProbe
         "libx264"
     ];
 
+    public static string LocalFfmpegPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "EkranKaydedici",
+        "bin",
+        "ffmpeg.exe");
+
     public static string? FindFfmpegExecutable()
     {
         var baseDir = AppContext.BaseDirectory;
         var bundled = Path.Combine(baseDir, "ffmpeg.exe");
-        if (File.Exists(bundled))
+        if (IsValidExecutable(bundled))
         {
             return bundled;
+        }
+
+        if (IsValidExecutable(LocalFfmpegPath))
+        {
+            return LocalFfmpegPath;
         }
 
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = Path.Combine(dir.Trim(), "ffmpeg.exe");
-            if (File.Exists(candidate))
+            if (IsValidExecutable(candidate))
             {
                 return candidate;
             }
         }
 
         return null;
+    }
+
+    public static async Task<string?> EnsureFfmpegExecutableAsync(Action<string>? onProgress = null)
+    {
+        var existing = FindFfmpegExecutable();
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var extracted = await TryExtractEmbeddedAsync(onProgress).ConfigureAwait(false);
+        if (extracted is not null)
+        {
+            return extracted;
+        }
+
+        return await TryDownloadFfmpegAsync(onProgress).ConfigureAwait(false);
+    }
+
+    private static bool IsValidExecutable(string path)
+    {
+        try
+        {
+            return File.Exists(path) && new FileInfo(path).Length >= MinValidFfmpegBytes;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task<string?> TryExtractEmbeddedAsync(Action<string>? onProgress)
+    {
+        try
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            using var resourceStream = asm.GetManifestResourceStream(EmbeddedFfmpegResource);
+            if (resourceStream is null)
+            {
+                return null;
+            }
+
+            onProgress?.Invoke("Kayıt motoru hazırlanıyor...");
+            var targetPath = LocalFfmpegPath;
+            var targetDir = Path.GetDirectoryName(targetPath)!;
+            Directory.CreateDirectory(targetDir);
+
+            var tempPath = targetPath + ".tmp";
+            using (var gzip = new GZipStream(resourceStream, CompressionMode.Decompress))
+            using (var outFs = File.Create(tempPath))
+            {
+                await gzip.CopyToAsync(outFs).ConfigureAwait(false);
+            }
+
+            File.Move(tempPath, targetPath, overwrite: true);
+            return IsValidExecutable(targetPath) ? targetPath : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<string?> TryDownloadFfmpegAsync(Action<string>? onProgress)
+    {
+        var tempZip = Path.Combine(Path.GetTempPath(), $"ekran_ffmpeg_{Guid.NewGuid():N}.zip");
+        try
+        {
+            onProgress?.Invoke("FFmpeg indiriliyor (ilk açılışta bir kez)...");
+            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
+            using (var resp = await http.GetAsync(FfmpegDownloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
+            {
+                resp.EnsureSuccessStatusCode();
+                await using var netStream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                await using var fileStream = File.Create(tempZip);
+                await netStream.CopyToAsync(fileStream).ConfigureAwait(false);
+            }
+
+            onProgress?.Invoke("FFmpeg çıkartılıyor...");
+            using var archive = ZipFile.OpenRead(tempZip);
+            var entry = archive.Entries.FirstOrDefault(e =>
+                e.FullName.EndsWith("/ffmpeg.exe", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(e.Name, "ffmpeg.exe", StringComparison.OrdinalIgnoreCase));
+            if (entry is null)
+            {
+                return null;
+            }
+
+            var targetPath = LocalFfmpegPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            var tempPath = targetPath + ".tmp";
+            entry.ExtractToFile(tempPath, overwrite: true);
+            File.Move(tempPath, targetPath, overwrite: true);
+            return IsValidExecutable(targetPath) ? targetPath : null;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempZip))
+                {
+                    File.Delete(tempZip);
+                }
+            }
+            catch
+            {
+                // Ignore temp cleanup errors.
+            }
+        }
     }
 
     public static CaptureProfile DetectProfile(string ffmpegPath)
@@ -86,7 +218,7 @@ public static class FfmpegProbe
             }
 
             var output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(3000);
+            proc.WaitForExit(5000);
             foreach (var enc in PreferredEncoders)
             {
                 if (output.Contains(enc, StringComparison.OrdinalIgnoreCase))
@@ -109,7 +241,7 @@ public static class FfmpegProbe
             using var proc = Process.Start(new ProcessStartInfo
             {
                 FileName = ffmpegPath,
-                Arguments = $"-hide_banner -loglevel error -f lavfi -i color=c=black:s=256x256:d=0.1 -c:v {encoder} -f null -",
+                Arguments = $"-hide_banner -loglevel error -f lavfi -i color=c=black:s=256x256:d=0.1 -pix_fmt nv12 -c:v {encoder} -f null -",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -119,7 +251,11 @@ public static class FfmpegProbe
             {
                 return false;
             }
-            proc.WaitForExit(3000);
+            if (!proc.WaitForExit(5000))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
             return proc.ExitCode == 0;
         }
         catch
@@ -135,7 +271,7 @@ public static class FfmpegProbe
             using var proc = Process.Start(new ProcessStartInfo
             {
                 FileName = ffmpegPath,
-                Arguments = "-hide_banner -loglevel error -f lavfi -i ddagrab=framerate=10:draw_mouse=1 -frames:v 1 -vf hwdownload,format=bgra -f null -",
+                Arguments = "-hide_banner -loglevel error -f lavfi -i ddagrab=framerate=10:draw_mouse=1 -frames:v 1 -vf hwdownload,format=bgra,format=yuv420p -f null -",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -145,7 +281,7 @@ public static class FfmpegProbe
             {
                 return false;
             }
-            if (!proc.WaitForExit(3000))
+            if (!proc.WaitForExit(4000))
             {
                 try { proc.Kill(entireProcessTree: true); } catch { }
                 return false;

@@ -18,6 +18,8 @@ public sealed class ReplayService : IDisposable
 
     private string? _ffmpegPath;
     private CaptureProfile? _profile;
+    private DateTime _lastSpawnUtc;
+    private string? _lastFfmpegError;
 
     private Process? _bufferProcess;
     private AudioCapturePipe? _bufferAudio;
@@ -59,23 +61,26 @@ public sealed class ReplayService : IDisposable
         }
     }
 
-    public string? EnsureReady()
+    public async Task<string?> EnsureReadyAsync(Action<string>? onProgress = null)
     {
         if (_ffmpegPath is not null && _profile is not null)
         {
             return null;
         }
 
-        var path = FfmpegProbe.FindFfmpegExecutable();
+        var path = await FfmpegProbe.EnsureFfmpegExecutableAsync(onProgress).ConfigureAwait(false);
         if (path is null)
         {
-            return "ffmpeg.exe bulunamadı. Lütfen uygulamanın yanına ffmpeg.exe koyun.";
+            return "ffmpeg.exe hazırlanamadı (internet bağlantısı veya yazma izni yok).";
         }
 
         _ffmpegPath = path;
-        _profile = FfmpegProbe.DetectProfile(path);
+        onProgress?.Invoke("Ekran ve kodlayıcı kontrol ediliyor...");
+        _profile = await Task.Run(() => FfmpegProbe.DetectProfile(path)).ConfigureAwait(false);
         return null;
     }
+
+    public string? EnsureReady() => EnsureReadyAsync().GetAwaiter().GetResult();
 
     public string GetEncoderSummary()
     {
@@ -182,6 +187,14 @@ public sealed class ReplayService : IDisposable
         }
 
         var proc = Process.Start(psi) ?? throw new InvalidOperationException("ffmpeg başlatılamadı.");
+        proc.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+            {
+                _lastFfmpegError = e.Data;
+            }
+        };
+        proc.BeginErrorReadLine();
         try
         {
             proc.PriorityClass = ProcessPriorityClass.BelowNormal;
@@ -194,6 +207,7 @@ public sealed class ReplayService : IDisposable
         audioPipe?.Start();
         _bufferAudio = audioPipe;
         _bufferProcess = proc;
+        _lastSpawnUtc = DateTime.UtcNow;
     }
 
     private void StopBufferProcessesLocked()
@@ -231,13 +245,29 @@ public sealed class ReplayService : IDisposable
                 }
 
                 var now = DateTime.UtcNow;
+                var quickFail = (now - _lastSpawnUtc).TotalSeconds < 5.0;
+                if (quickFail && _profile is not null)
+                {
+                    if (_profile.SupportsDdagrab)
+                    {
+                        _profile = _profile with { CaptureMethod = "gdigrab", SupportsDdagrab = false };
+                    }
+                    else if (!string.Equals(_profile.EncoderName, "libx264", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _profile = _profile with { EncoderName = "libx264" };
+                    }
+                }
+
                 recentFailures.RemoveAll(t => (now - t).TotalSeconds > 20);
                 recentFailures.Add(now);
                 if (recentFailures.Count >= 5)
                 {
                     _wantReplayRunning = false;
                     StopBufferProcessesLocked();
-                    ReplayStateChanged?.Invoke(false, "Arka plan tamponu durduruldu");
+                    var detail = string.IsNullOrWhiteSpace(_lastFfmpegError)
+                        ? "Arka plan tamponu durduruldu"
+                        : $"Durduruldu: {_lastFfmpegError}";
+                    ReplayStateChanged?.Invoke(false, detail);
                     break;
                 }
 
@@ -424,6 +454,14 @@ public sealed class ReplayService : IDisposable
             try
             {
                 var proc = Process.Start(psi) ?? throw new InvalidOperationException("ffmpeg başlatılamadı.");
+                proc.ErrorDataReceived += (_, e) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(e.Data))
+                    {
+                        _lastFfmpegError = e.Data;
+                    }
+                };
+                proc.BeginErrorReadLine();
                 audioPipe?.Start();
                 _manualAudio = audioPipe;
                 _manualProcess = proc;

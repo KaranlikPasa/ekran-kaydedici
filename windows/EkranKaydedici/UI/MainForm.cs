@@ -46,6 +46,7 @@ public sealed class MainForm : Form
     private bool _reallyClosing;
     private bool _syncingUi;
     private bool _isSavingClip;
+    private bool _hotkeyRegistered = true;
     private string? _lastSavedFile;
     private DateTime _manualStartUtc;
 
@@ -75,6 +76,9 @@ public sealed class MainForm : Form
         _replay = new ReplayService();
         _lastSavedFile = ReplayService.GetLatestRecording();
 
+        SuspendLayout();
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        AutoScaleMode = AutoScaleMode.Dpi;
         Text = "Ekran Kaydedici";
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -303,6 +307,9 @@ public sealed class MainForm : Form
         SyncUiFromConfig();
         RefreshLastFileCard();
 
+        ResumeLayout(false);
+        PerformLayout();
+
         // Ensure Handle exists even when starting hidden (--background) so F8 hotkey works!
         _ = Handle;
         StartupManager.Apply(_config.RunAtStartup);
@@ -326,7 +333,7 @@ public sealed class MainForm : Form
         {
             var dark = 1;
             _ = DwmSetWindowAttribute(Handle, DwmwaUseImmersiveDarkMode, ref dark, sizeof(int));
-            _ = RegisterHotKey(Handle, HotkeyF8Id, ModNoRepeat, VkF8);
+            _hotkeyRegistered = RegisterHotKey(Handle, HotkeyF8Id, ModNoRepeat, VkF8);
         }
     }
 
@@ -354,7 +361,7 @@ public sealed class MainForm : Form
 
     private async Task InitializeBackendAsync()
     {
-        var err = await Task.Run(() => _replay.EnsureReady());
+        var err = await _replay.EnsureReadyAsync(msg => RefreshStatus(msg));
         if (err is not null)
         {
             RefreshStatus(err);
@@ -468,6 +475,16 @@ public sealed class MainForm : Form
 
     private void RefreshStatus(string? message = null)
     {
+        if (IsDisposed)
+        {
+            return;
+        }
+        if (IsHandleCreated && InvokeRequired)
+        {
+            BeginInvoke(() => RefreshStatus(message));
+            return;
+        }
+
         var isManual = _replay.IsManualRecording;
         var replayActive = _config.ReplayEnabled && _replay.IsReplayRunning;
 
@@ -494,8 +511,11 @@ public sealed class MainForm : Form
             if (replayActive)
             {
                 _dotLabel.ForeColor = AccentGreen;
-                _headlineLabel.Text = "Anlık Tekrar · F8";
-                _statusLabel.Text = message ?? $"Son {_config.ReplaySeconds} sn hazır ({_replay.GetEncoderSummary()})";
+                _headlineLabel.Text = _hotkeyRegistered ? "Anlık Tekrar · F8" : "Anlık Tekrar (F8 meşgul)";
+                _statusLabel.Text = message ?? (
+                    _hotkeyRegistered
+                        ? $"Son {_config.ReplaySeconds} sn hazır ({_replay.GetEncoderSummary()})"
+                        : "F8 başka uygulamada kullanımda; butondan klip alabilirsiniz");
                 _clipButton.Enabled = !_isSavingClip;
                 _trayIcon.Text = $"Ekran Kaydedici — Anlık Tekrar Aktif (F8)";
             }

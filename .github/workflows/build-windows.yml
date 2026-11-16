@@ -23,13 +23,39 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Prepare embedded ffmpeg.exe.gz
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-tmp -Force
+          $ffmpegExe = Get-ChildItem -Path ffmpeg-tmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          if (-not $ffmpegExe) { throw "ffmpeg.exe not found in archive" }
+
+          New-Item -ItemType Directory -Path tools -Force | Out-Null
+          Copy-Item $ffmpegExe.FullName "tools\ffmpeg.exe" -Force
+
+          $srcStream = [System.IO.File]::OpenRead("tools\ffmpeg.exe")
+          $dstStream = [System.IO.File]::Create("windows\EkranKaydedici\ffmpeg.exe.gz")
+          $gzip = New-Object System.IO.Compression.GZipStream($dstStream, [System.IO.Compression.CompressionLevel]::Optimal)
+          try {
+            $srcStream.CopyTo($gzip)
+          } finally {
+            $gzip.Dispose()
+            $dstStream.Dispose()
+            $srcStream.Dispose()
+          }
+          Remove-Item ffmpeg.zip, ffmpeg-tmp -Recurse -Force
+
       - name: Restore and Test
         shell: pwsh
+        env:
+          EKRAN_TEST_FFMPEG: ${{ github.workspace }}\tools\ffmpeg.exe
         run: |
           dotnet restore windows/EkranKaydedici.sln
           dotnet test windows/EkranKaydedici.sln -c Release --no-restore
 
-      - name: Publish single-file EkranKaydedici.exe
+      - name: Publish single-file EkranKaydedici.exe (with embedded ffmpeg)
         shell: pwsh
         run: |
           dotnet publish windows/EkranKaydedici/EkranKaydedici.csproj `
@@ -40,22 +66,48 @@ jobs:
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -o publish-win-x64
 
-      - name: Bundle ffmpeg.exe into portable ZIP
+      - name: Verify self-contained ffmpeg extraction on Windows
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
-          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-tmp -Force
-          $ffmpegExe = Get-ChildItem -Path ffmpeg-tmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-          if (-not $ffmpegExe) { throw "ffmpeg.exe not found in archive" }
+          $extractedFfmpeg = Join-Path $env:LOCALAPPDATA "EkranKaydedici\bin\ffmpeg.exe"
+          if (Test-Path $extractedFfmpeg) { Remove-Item $extractedFfmpeg -Force }
 
+          $proc = Start-Process -FilePath "publish-win-x64\EkranKaydedici.exe" -ArgumentList "--background" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Milliseconds 500
+            if (Test-Path $extractedFfmpeg) {
+              $size = (Get-Item $extractedFfmpeg).Length
+              if ($size -gt 5MB) {
+                $ok = $true
+                break
+              }
+            }
+            if ($proc.HasExited) { break }
+          }
+
+          if (-not $proc.HasExited) {
+            Stop-Process -Id $proc.Id -Force
+          }
+          Get-Process -Name "ffmpeg" -ErrorAction SilentlyContinue | Stop-Process -Force
+
+          if (-not $ok) {
+            throw "EkranKaydedici.exe failed to extract embedded ffmpeg.exe!"
+          }
+          Write-Host "Verified embedded ffmpeg extraction at $extractedFfmpeg"
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path bundle -Force | Out-Null
           Copy-Item "publish-win-x64\EkranKaydedici.exe" "bundle\EkranKaydedici.exe"
-          Copy-Item $ffmpegExe.FullName "bundle\ffmpeg.exe"
+          Copy-Item "tools\ffmpeg.exe" "bundle\ffmpeg.exe"
           @(
             'Ekran Kaydedici (Windows x64)'
             '============================='
-            '1. Klasoru istediginiz yere cikartin ve EkranKaydedici.exe dosyasini calistirin.'
+            '1. EkranKaydedici.exe dosyasini calistirmaniz yeterlidir (ffmpeg dahildir).'
             '2. Varsayilan olarak Medal modu (Anlik Tekrar) aciktir; F8 tusuna basinca son 30 saniyeyi kaydeder.'
             '3. Kayitlar "Videolar\EkranKayitlari" klasorune kaydedilir.'
             '4. Pencereyi X ile kapattiginizda sag alt sistem tepsisinde calismaya devam eder.'
@@ -69,11 +121,12 @@ jobs:
           tag_name: v1.0.0-win
           name: Ekran Kaydedici v1.0.0 (Windows x64)
           body: |
-            Windows 10/11 (x64) için kurulumsuz taşınabilir sürüm.
+            Windows 10/11 (x64) için tek dosya, kurulumsuz sürüm (`ffmpeg` gömülüdür).
 
-            - **Önerilen indirme:** `EkranKaydedici-Windows-x64.zip` (içinde `EkranKaydedici.exe` + `ffmpeg.exe` hazırdır, çıkartıp direkt çalıştırabilirsiniz).
+            - **Doğrudan indirme:** `EkranKaydedici.exe` — başka hiçbir dosya gerekmeden indirip çalıştırabilirsiniz (ilk açılışta kendi `ffmpeg.exe` motorunu otomatik çıkarır).
+            - **Alternatif:** `EkranKaydedici-Windows-x64.zip`
             - **F8:** Arka planda son 15 / 30 / 60 / 90 saniyeyi anında `.mp4` olarak kaydeder.
-            - **Düşük tüketim:** Donanım kodlayıcıyı (`NVENC` / `QSV` / `AMF`) ve DXGI `ddagrab` yakalamayı otomatik algılar.
+            - **Düşük tüketim:** Donanım kodlayıcıyı (`NVENC` / `QSV` / `AMF`) ve DXGI `ddagrab` yakalamayı otomatik algılar (`gdigrab` + `libx264` otomatik yedekli).
           files: |
-            EkranKaydedici-Windows-x64.zip
             publish-win-x64/EkranKaydedici.exe
+            EkranKaydedici-Windows-x64.zip
